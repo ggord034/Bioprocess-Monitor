@@ -1,11 +1,11 @@
 import os
 import pandas as pd
 import numpy as np
+from pathlib import Path
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MultipleLocator
 
 class BioprocessMonitor:
-    path_import = os.path.join("dataset_fermentation.csv")
-    df = pd.read_csv(path_import)
-    print(df)
 
     def __init__(self, filepath, ph_lims, temperature_lims):
         """
@@ -21,17 +21,20 @@ class BioprocessMonitor:
         temperature_lims : tuple[float, float]
             Lower and upper acceptable temperature limits.
         """
-
+        for limits in (ph_lims, temperature_lims):
+            if len(limits) != 2 or limits[0] > limits[1]:
+                raise ValueError("Limits must be (lower, upper), with lower <= upper.")
         self.filepath = filepath
         self.ph_lims = ph_lims
         self.temperature_lims = temperature_lims
-
-        df = pd.read_csv("dataset_fermentation.csv")
-        print(df)
-
-
-
-
+        self.df = pd.read_csv(filepath)
+        required = {'batch_id', 'time_h', 'temperature_C', 'pH', 'DO_percent',
+                    'C_glucose_g_L^-1', 'C_biomass_g_L^-1', 'C_product_g_L^-1'}
+        missing = required.difference(self.df.columns)
+        if missing:
+            raise ValueError(f"Missing dataset columns: {sorted(missing)}")
+        if self.df.empty:
+            raise ValueError("Dataset must contain measurements.")
 
     def extract_batch(self, batch_id):
         """
@@ -48,6 +51,8 @@ class BioprocessMonitor:
             DataFrame containing only rows associated with
             the requested batch.
         """
+        return self.df.loc[self.df['batch_id'] == batch_id].sort_values(
+            'time_h', kind='stable').copy()
 
     def optimal_ph_mask(self, df_batch):
         """
@@ -65,6 +70,7 @@ class BioprocessMonitor:
             A mask whereby True indicates that the measurement
             is within the acceptable operating range.
         """
+        return df_batch['pH'].between(*self.ph_lims, inclusive='both')
 
     def optimal_temperature_mask(self, df_batch):
         """
@@ -82,6 +88,7 @@ class BioprocessMonitor:
             A mask whereby True indicates that the measurement
             is within the acceptable operating range.
         """
+        return df_batch['temperature_C'].between(*self.temperature_lims, inclusive='both')
 
     def get_n_batches(self):
         """
@@ -93,77 +100,68 @@ class BioprocessMonitor:
         int
             Total number of distinct batch identifiers.
         """
+        return int(self.df['batch_id'].nunique())
 
     def export_dashboard(self, batch_id, filepath):
-        """
-        Creates and saves a dashboard figure for a single batch.
-
-        Parameters
-        ----------
-        batch_id : int
-            Batch identifier.
-        filepath : str
-            Output PNG image path.
-
-        Dashboard Requirements
-        ----------------------
-        Create a 2 × 2 figure containing:
-
-        Top-Left
-            Glucose, biomass, and product concentrations versus time.
-            - A different color and marker should be used for each substance.
-
-        Top-Right
-            Temperature versus time.
-            - Measurements within the acceptable temperature range
-              should be displayed as green circles.
-            - Measurements outside the acceptable temperature range
-              should be displayed as red X markers.
-
-        Bottom-Left
-            pH versus time.
-            - Measurements within the acceptable pH range
-              should be displayed as green circles.
-            - Measurements outside the acceptable pH range
-              should be displayed as red X markers.
-
-        Bottom-Right
-            Dissolved oxygen versus time.
-
-        Additional Requirements
-        -----------------------
-        - Use scatter plots.
-        - Add x-axis and y-axis labels.
-        - Add legends where appropriate.
-        - Apply consistent formatting across all subplots unless
-          indicated otherwise.
-        - Apply a tick spacing of 6 h on the x-axis for all subplots.
-        - Save the figure to the provided filepath.
-        - Close the figure after saving.
-        """
+        batch = self.extract_batch(batch_id)
+        if batch.empty:
+            raise ValueError(f"Batch {batch_id} has no measurements.")
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        fig, axes = plt.subplots(2, 2, figsize=(13, 9), constrained_layout=True)
+        try:
+            fig.suptitle(f'Bioprocess Monitor | Batch {batch_id:03d}', fontsize=18)
+            for substance, color, marker in [('glucose', '#2864ad', 'o'),
+                                             ('biomass', '#e89828', 's'),
+                                             ('product', '#8056a6', '^')]:
+                axes[0, 0].scatter(batch['time_h'], batch[f'C_{substance}_g_L^-1'],
+                                   color=color, marker=marker, s=25,
+                                   label=substance.capitalize())
+            axes[0, 0].set(title='Concentration profiles', ylabel='Concentration (g/L)')
+            axes[0, 0].legend()
+            for ax, column, limits, mask, title, ylabel in [
+                (axes[0, 1], 'temperature_C', self.temperature_lims,
+                 self.optimal_temperature_mask(batch), 'Temperature', 'Temperature (°C)'),
+                (axes[1, 0], 'pH', self.ph_lims,
+                 self.optimal_ph_mask(batch), 'pH', 'pH')]:
+                ax.axhspan(*limits, color='green', alpha=0.08,
+                           label=f'Acceptable range: {limits[0]}–{limits[1]}')
+                ax.scatter(batch.loc[mask, 'time_h'], batch.loc[mask, column],
+                           color='green', marker='o', s=25, label='Within range')
+                ax.scatter(batch.loc[~mask, 'time_h'], batch.loc[~mask, column],
+                           color='red', marker='x', s=35, label='Outside range')
+                ax.set(title=title, ylabel=ylabel)
+                ax.legend(fontsize=9)
+            axes[1, 1].scatter(batch['time_h'], batch['DO_percent'],
+                               color='#237f89', marker='o', s=25)
+            axes[1, 1].set(title='Dissolved oxygen', ylabel='Dissolved oxygen (%)')
+            for ax in axes.flat:
+                ax.set_xlabel('Time (h)')
+                ax.xaxis.set_major_locator(MultipleLocator(6))
+                ax.grid(True, alpha=0.25)
+                ax.set_axisbelow(True)
+                ax.spines[['top', 'right']].set_visible(False)
+            fig.savefig(filepath, dpi=180)
+        finally:
+            plt.close(fig)
 
     def export_summary(self, filepath):
-        """
-        Generates a batch summary table and exports it to a CSV file.
+        rows = []
 
-        Parameters
-        ----------
-        filepath : str
-            Output CSV table path.
+        for batch_id in sorted(self.df["batch_id"].unique()):
+            batch = self.extract_batch(batch_id)
+            batch = batch.sort_values("time_h")
 
-        Summary Table Columns
-        ---------------------
-        batch_id
-            Batch identifier.
+            rows.append({
+                "batch_id": batch_id,
+                "ph_optimal_percent": round(
+                    self.optimal_ph_mask(batch).mean() * 100, 2
+                ),
+                "temperature_optimal_percent": round(
+                    self.optimal_temperature_mask(batch).mean() * 100, 2
+                ),
+                "C_product_g_L^-1_final":
+                    batch["C_product_g_L^-1"].iloc[-1]
+            })
 
-        ph_optimal_percent
-            Percentage of measurements in a batch within the
-            acceptable pH range, rounded to 2 decimal places.
-
-        temperature_optimal_percent
-            Percentage of measurements in a batch within the
-            acceptable temperature range, rounded to 2 decimal places.
-
-        C_product_g_L^-1_final
-            Final product concentration for the batch.
-        """
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(rows).to_csv(filepath, index=False)
