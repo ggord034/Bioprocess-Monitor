@@ -8,19 +8,7 @@ from matplotlib.ticker import MultipleLocator
 class BioprocessMonitor:
 
     def __init__(self, filepath, ph_lims, temperature_lims):
-        """
-        Utility class used to monitor bioprocesses by
-        generating dashboards and summaries.
-
-        Parameters
-        ----------
-        filepath : str
-            Input CSV dataset path.
-        ph_lims : tuple[float, float]
-            Lower and upper acceptable pH limits.
-        temperature_lims : tuple[float, float]
-            Lower and upper acceptable temperature limits.
-        """
+        
         for limits in (ph_lims, temperature_lims):
             if len(limits) != 2 or limits[0] > limits[1]:
                 raise ValueError("Limits must be (lower, upper), with lower <= upper.")
@@ -36,72 +24,28 @@ class BioprocessMonitor:
         if self.df.empty:
             raise ValueError("Dataset must contain measurements.")
 
+    
     def extract_batch(self, batch_id):
-        """
-        Extracts data corresponding to a single batch.
-
-        Parameters
-        ----------
-        batch_id : int
-            Batch identifier.
-
-        Returns
-        -------
-        pandas.DataFrame
-            DataFrame containing only rows associated with
-            the requested batch.
-        """
+        
         return self.df.loc[self.df['batch_id'] == batch_id].sort_values(
             'time_h', kind='stable').copy()
+        
 
     def optimal_ph_mask(self, df_batch):
-        """
-        Determines whether each pH measurement falls within
-        the acceptable operating range.
-
-        Parameters
-        ----------
-        df_batch : pandas.DataFrame
-            Batch-specific DataFrame.
-
-        Returns
-        -------
-        array-like of bool
-            A mask whereby True indicates that the measurement
-            is within the acceptable operating range.
-        """
+       
         return df_batch['pH'].between(*self.ph_lims, inclusive='both')
 
+    
     def optimal_temperature_mask(self, df_batch):
-        """
-        Determines whether each temperature measurement falls
-        within the acceptable operating range.
-
-        Parameters
-        ----------
-        df_batch : pandas.DataFrame
-            Batch-specific DataFrame.
-
-        Returns
-        -------
-        array-like of bool
-            A mask whereby True indicates that the measurement
-            is within the acceptable operating range.
-        """
+        
         return df_batch['temperature_C'].between(*self.temperature_lims, inclusive='both')
 
+        
     def get_n_batches(self):
-        """
-        Determines the number of unique batches present
-        in the dataset.
-
-        Returns
-        -------
-        int
-            Total number of distinct batch identifiers.
-        """
+        
         return int(self.df['batch_id'].nunique())
 
+        
     def export_dashboard(self, batch_id, filepath):
         batch = self.extract_batch(batch_id)
         if batch.empty:
